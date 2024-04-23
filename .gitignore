@@ -1,0 +1,11 @@
+files
+checkpoints
+*pyc*
+res
+masks
+*.pkl
+*.npy
+*.txt
+*.ipynb
+*.sh
+.env
