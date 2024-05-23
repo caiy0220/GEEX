@@ -43,6 +43,8 @@ class IntegratedGrad(GradBased, ExplainerWithBaseline):
         self.smooth_num, self.smooth_sigma = 1, 0.5
         self.aligned_noise = False
         self.blur_m = None
+        if isinstance(self.baseline, str) and self.baseline.lower() == 'blur':
+            self.set_bluring_kernel()   
 
     def set_bluring_kernel(self, blur_m=None):
         self.blur_m = blur_m if blur_m is not None else GaussianBlur((31, 31), 5.0)

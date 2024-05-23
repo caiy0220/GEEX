@@ -30,18 +30,7 @@ class CNN(nn.Module):
 class CNNSoftmax(CNN):
     def forward(self, x):
         return F.softmax(super().forward(x), dim=1)
-
-class SoftmaxWrapping(nn.Module):
-    def __init__(self, m):
-        super().__init__()
-        self.m = m
-
-    def parameters(self, recurse: bool = True):
-        return self.m.parameters(recurse)
-
-    def forward(self, x):
-        return F.softmax(self.m(x), dim=1)
-    
+   
 def train(train_loader, img_size, m_pth):
     print(f'Classifier missing at {m_pth}, ')
     print('Training one now, might take couple of minutes')

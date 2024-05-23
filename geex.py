@@ -67,7 +67,6 @@ class GE(object):
         self.fitness_fn = None  # the loss is f(x) for one class, specified by the 'explain()' function
         self.pv_floor, self.pv_ceil = None, None
         self.sym_noise = True
-        self.shift = True 
 
         # Initialization of masks/noises
         self.masks = self._noise_masks((1, *input_size[1:]), mask_num) / 2 
@@ -177,18 +176,6 @@ class GE(object):
     def _noise_masks(shape, num):
         return torch.randn((num, ) + shape, dtype=torch.float32)
         
-    def _set_shift4resize(self, flag: bool):
-        self.shift = flag
-
-    def _shifting(self, masks, r_height, r_width):
-        if not self.shift: return masks
-        idx_height, idx_width = np.random.randint(r_height), np.random.randint(r_width)
-        # Shift rows and cols
-        part0, part1 = masks[:,:,:idx_height,:], masks[:,:,idx_height:,:]
-        masks = torch.cat([part1, part0], dim=-2)
-        part0, part1 = masks[:,:,:,:idx_width], masks[:,:,:,idx_width:]
-        return torch.cat([part1, part0], dim=-1)
-
 """
 Section 3.2 GEEX, vanilla implementation with straightforward interpolation
 """
