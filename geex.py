@@ -1,12 +1,10 @@
 import torch
 import torch.nn.functional as F
-from utils.log import log
-from utils import utils
-from utils.utils import deprecated
 from tqdm import tqdm
 import numpy as np
 import pickle
-from torchvision.transforms import Resize, GaussianBlur
+from torchvision.transforms import GaussianBlur
+import utils
 
 class ExplainerWithBaseline(object):
     def __init__(self):
@@ -20,7 +18,7 @@ class ExplainerWithBaseline(object):
         if isinstance(self.baseline, str) and self.baseline.lower() == 'blur':   
             # explicand-specific baseline, requiring definition of 'self.blur_m', only apply to IMG
             if self.blur_m is None: 
-                log('Bluring kernel is not defined, use default', lvl=2)
+                print('Bluring kernel is not defined, use default')
                 self.set_bluring_kernel()
             baselines = self.blur_m(x)
         elif isinstance(self.baseline, (int, float)):
@@ -51,8 +49,7 @@ class ExplainerWithBaseline(object):
  
 # Section 3.1 Gradient Estimation
 class GE(object):
-    def __init__(self, mask_num:int, sigma:float, input_size, mask_size=None,
-                 separate_chn=False, sym_noise=True, mask_pth=None):
+    def __init__(self, mask_num:int, sigma:float, input_size):
         """
         Parameters:
         -----------
@@ -66,21 +63,14 @@ class GE(object):
         """
         super().__init__()
         self.mask_num, self.sigma = mask_num, sigma
-        self.input_size, self.mask_size = input_size, mask_size
+        self.input_size = input_size
         self.fitness_fn = None  # the loss is f(x) for one class, specified by the 'explain()' function
         self.pv_floor, self.pv_ceil = None, None
-        self.sym_noise = sym_noise
+        self.sym_noise = True
         self.shift = True 
 
         # Initialization of masks/noises
-        # Same change for different channels
-        num_chns = 3 if separate_chn else 1
-        if mask_pth is None:
-            target_size = input_size if mask_size is None else mask_size
-            self.masks = self._noise_masks((num_chns, *target_size[1:]), mask_num) / 2 
-        else:
-            self.masks = pickle.load(open('mask_pth', 'rb'))
-        self._resize_masks()
+        self.masks = self._noise_masks((1, *input_size[1:]), mask_num) / 2 
 
     def set_fitness_fn(self, fitness_fn):
         self.fitness_fn = fitness_fn    
@@ -112,7 +102,7 @@ class GE(object):
 
                 # Applying masks on img for generating queries 'z'
                 masks = self.masks[i: ptr] 
-                masks = torch.cat([masks, -masks]) if self.sym_noise else masks
+                masks = self._get_symmetric_masks(masks)
                 queries = self._apply_noises(img, masks)
 
                 # Get observations from the outcome of the target 'm'
@@ -167,6 +157,9 @@ class GE(object):
         """
         self.masks = self._mask_smoothing(self.masks, filter_width, filter_sigma, batch_size)
 
+    def _get_symmetric_masks(self, masks):
+        return torch.cat([masks, -masks]) if self.sym_noise else masks
+
     @staticmethod
     def _mask_smoothing(orgs, filter_width=5, filter_sigma=0.7, batch_size=64):
         if filter_width <= 0:
@@ -200,8 +193,7 @@ class GE(object):
 Section 3.2 GEEX, vanilla implementation with straightforward interpolation
 """
 class GEEX_raw(GE, ExplainerWithBaseline):
-    def __init__(self, mask_num, sigma, input_size, mask_size=None, separate_chn=False, 
-                 sym_noise=True, mask_pth=None, steps=10, baseline=None):
+    def __init__(self, mask_num, sigma, input_size, steps=10, baseline=None):
         """
         Parameters:
         -----------
@@ -209,8 +201,7 @@ class GEEX_raw(GE, ExplainerWithBaseline):
         baseline:   specifying the baseline for the explainer, 
                     refer to '_get_baseline()' for details
         """
-        super().__init__(mask_num, sigma, input_size, mask_size, separate_chn, 
-                         sym_noise, mask_pth)
+        super().__init__(mask_num, sigma, input_size)
         self.baseline = baseline if baseline is not None else torch.zeros(input_size)
         self.steps = steps
         self.blur_m = None
@@ -244,12 +235,15 @@ class GEEX_raw(GE, ExplainerWithBaseline):
 Section 3.3 GEEX -- Integrating dense one-sample gradient estimators
 """    
 class GEEX(GE, ExplainerWithBaseline):
-    def __init__(self, mask_num, sigma, input_size, mask_size=None, separate_chn=False, 
-                 sym_noise=True, mask_pth=None, baseline=None):
-        super().__init__(mask_num, sigma, input_size, mask_size, separate_chn, sym_noise, mask_pth)
+    def __init__(self, mask_num, sigma, input_size, baseline=None):
+        super().__init__(mask_num, sigma, input_size)
         self.baseline = baseline if baseline is not None else torch.zeros(input_size)
         self.alphas = torch.rand(mask_num)  # Uniformly sampled points on path
         self.blur_m = None
+        if isinstance(self.baseline, str) and self.baseline.lower() == 'blur':
+            # use default bluring kernel for baseline
+            # the option can be overwritten by explicitly specifying a kernel with 'set_bluring_kernel'
+            self.set_bluring_kernel()   
 
     def set_bluring_kernel(self, blur_m=None):
         """ Blurring kernel that defines the baseline for every explicand """
@@ -265,12 +259,8 @@ class GEEX(GE, ExplainerWithBaseline):
             path_args = self.alphas[ptr_l: ptr_r]
         else:
             assert 1==0, f'Unknown path mode, only support {self.available_choices.keys()}'
-        
         path_args = torch.cat([path_args, path_args]) if self.sym_noise else path_args
         return path_args
-    
-    def _get_symmetric_masks(self, masks):
-        return torch.cat([masks, -masks]) if self.sym_noise else masks
 
     def explain(self, m, img, batch_size=64, verbose=False, target_class=None, get_raw=False):
         total_n, baseline = len(self.masks), self._get_baseline(img)
