@@ -14,8 +14,10 @@ Cite the paper as:
 ```
 
 ## Overview of GEEX
-<object data="https://github.com/caiy0220/GEEX/blob/main/overview.pdf" type="application/pdf" width="700px" height="700px">
-    <embed src="https://github.com/caiy0220/GEEX/blob/main/overview.pdf">
-        <p>This browser does not support PDFs. Please download the PDF to view it: <a href="https://github.com/caiy0220/GEEX/blob/main/overview.pdf">Download PDF</a>.</p>
-    </embed>
-</object>
+![GEEX overview](https://github.com/caiy0220/GEEX/raw/main/overview.png)
+To derive feature attributions, GEEX prepares queries $\{\boldsymbol{z}\}$ by overlaying masks $\boldsymbol{\epsilon}\sim \pi(\cdot|\boldsymbol{x})$ on explicand variants sampled uniformly from the straightline path between the explicand and the baseline $\boldsymbol{x}(\alpha) = \mathring{\boldsymbol{x}}-\alpha(\boldsymbol{x} - \mathring{\boldsymbol{x}})$.
+With the generated queries, the explainer acquires a set of observations $\{f(\boldsymbol{x}(\alpha) + \boldsymbol{\epsilon})\}$, which allows the estimation of feature attributions by:
+$$     \boldsymbol{\xi} = \frac{(\boldsymbol{x} - \boldsymbol{\mathring{x}})}{n^*} \circ \sum_{
+    % \boldsymbol{\epsilon}\sim\pi(\cdot|\boldsymbol{0}), ~\alpha\sim \mathcal{U}_{[0, 1]}
+    \substack{\boldsymbol{\epsilon}\sim\pi(\cdot|\boldsymbol{0}) \\ \alpha\sim \mathcal{U}_{[0, 1]}}
+    } f(\boldsymbol{x}(\alpha) + \boldsymbol{\epsilon}) \nabla_{\boldsymbol{x}}\log\pi(\boldsymbol{\epsilon}|\boldsymbol{0}) $$
