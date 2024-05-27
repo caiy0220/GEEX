@@ -6,36 +6,32 @@ from torch import nn
 from torch.nn import functional as F
 from torchvision import transforms
 
-def load_img(file_path):
-    img = PIL.Image.open(file_path)
-    img = img.resize((299, 299))
-    img = np.asarray(img)
-    return img
-
-# def preprocessing(imgs):
-#     imgs = np.array(imgs)
-#     transformer = transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
-#     imgs = imgs/255
-#     imgs = np.transpose(imgs, (0,3,1,2))
-#     imgs = torch.tensor(imgs, dtype=torch.float32)
-#     imgs = transformer.forward(imgs)
-#     # return images.requires_grad_(True)
-#     return imgs
-
-def get_device(m):
-    return next(m.parameters()).device
-
 PIX_MEAN_IMAGENET = torch.tensor((0.485, 0.456, 0.406))
 PIX_STD_IMAGENET = torch.tensor((0.229, 0.224, 0.225))
 
+# preprocessing for IMAGENET
 preprocessing = transforms.Compose([
     transforms.Resize((299, 299)),
     transforms.ToTensor(),
     transforms.Normalize(PIX_MEAN_IMAGENET, PIX_STD_IMAGENET)
     ])
 
+def load_img(file_path):
+    img = PIL.Image.open(file_path)
+    img = img.resize((299, 299))
+    img = np.asarray(img)
+    return img
+
+def get_device(m):
+    return next(m.parameters()).device
+
 def denormalize_imagenet(img):
     return img * PIX_STD_IMAGENET + PIX_MEAN_IMAGENET
+
+def idx2pos(idx, col=28):
+    row_id = idx // col 
+    col_id = idx % col 
+    return row_id, col_id
 
 class SoftmaxWrapping(nn.Module):
     def __init__(self, m):
@@ -47,3 +43,14 @@ class SoftmaxWrapping(nn.Module):
 
     def forward(self, x):
         return F.softmax(self.m(x), dim=1)
+
+class RangeSampler(torch.utils.data.Sampler):
+    def __init__(self, r):
+        self.r = r
+
+    def __iter__(self):
+        return iter(self.r)
+
+    def __len__(self):
+        return len(self.r)
+    

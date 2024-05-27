@@ -94,7 +94,6 @@ class GE(object):
             ges = []
             lbl = m(img.to(utils.get_device(m))).detach().cpu().argmax().item() 
             target_class = lbl if target_class is None else target_class
-            # base = self._fitness(m, img, target_class)[0]
             for i in tqdm(range(0, total_n, batch_size), disable=not verbose):
                 ptr = min(i+batch_size, total_n)
                 batch_weight = float(ptr - i) / batch_size
@@ -105,7 +104,7 @@ class GE(object):
                 queries = self._apply_noises(img, masks)
 
                 # Get observations from the outcome of the target 'm'
-                fitness = self._fitness(m, queries, target_class)
+                fitness = self._fitness(m, queries, target_class).detach().cpu()
                 # fitness = fitness - base if self.var_reduction else fitness
 
                 # Estimating gradient with given observation, collecting the result of current batch
@@ -145,9 +144,9 @@ class GE(object):
             # the loss is the cross entropy comparing current outcome to the non-informative state {1/L} * L
             classes = len(logits[0])
             target = torch.ones_like(logits, device=device) / classes 
-            return self.fitness_fn(logits, target).detach().cpu()
+            return self.fitness_fn(logits, target)
         else:
-            return logits.detach().cpu()[:, target]
+            return logits[:, target]
 
     def mask_smoothing(self, filter_width=5, filter_sigma=0.7, batch_size=64):
         """
@@ -241,9 +240,9 @@ class GEEX(GE, ExplainerWithBaseline):
         alphas = args[0]
         return alphas.view(-1,1,1,1) * img + (1-alphas).view(-1,1,1,1) * baseline
 
-    def _get_path_args(self, ptr_l, ptr_r):
+    def _get_path_args(self, ptr_l, ptr_r, device):
         if self.path_mode == 'interpolate':
-            path_args = self.alphas[ptr_l: ptr_r]
+            path_args = self.alphas[ptr_l: ptr_r].to(device)
         else:
             assert 1==0, f'Unknown path mode, only support {self.available_choices.keys()}'
         path_args = torch.cat([path_args, path_args]) if self.sym_noise else path_args
@@ -251,23 +250,26 @@ class GEEX(GE, ExplainerWithBaseline):
 
     def explain(self, m, img, batch_size=64, verbose=False, target_class=None, get_raw=False):
         total_n, baseline = len(self.masks), self._get_baseline(img)
+        device = utils.get_device(m)
+        if isinstance(baseline, torch.Tensor):
+            baseline = baseline.to(device)
         with torch.no_grad():
             ges = []
-            lbl = m(img.to(utils.get_device(m))).detach().cpu().argmax().item() 
+            img = img.to(device)
+            lbl = m(img).detach().cpu().argmax().item() 
             target_class = lbl if target_class is None else target_class
             for i in tqdm(range(0, total_n, batch_size), disable=not verbose):
                 ptr = min(i+batch_size, total_n)
                 batch_weight = float(ptr - i) / batch_size
 
-                # TODO: put all this on GPUs
                 # Combining masks and alphas for generating queries
-                masks = self._get_symmetric_masks(self.masks[i: ptr])
-                path_args = self._get_path_args(i, ptr)
+                masks = self._get_symmetric_masks(self.masks[i: ptr].to(device))
+                path_args = self._get_path_args(i, ptr, device)
 
                 samples = self._get_path(img, baseline, path_args)
                 queries = self._apply_noises(samples, masks, baseline)
 
-                fitness = self._fitness(m, queries, target_class)
+                fitness = self._fitness(m, queries, target_class).to(device)
 
                 ge_batch = self._gradient_estimate(fitness, masks)
                 ge_batch = torch.mean(ge_batch, dim=0, keepdim=True) * batch_weight
@@ -275,7 +277,7 @@ class GEEX(GE, ExplainerWithBaseline):
             raw = torch.mean(torch.cat(ges), dim=0)
             diff = (img - baseline)[0] 
             grad = raw * diff
-            return (grad, raw) if get_raw else grad
+            return (grad.cpu(), raw.cpu()) if get_raw else grad.cpu()
         
 class FixedGaussianFilter:
     def __init__(self, kernel_size, sigma, dtype: torch.dtype=torch.float32, device: torch.device='cpu') -> None:
