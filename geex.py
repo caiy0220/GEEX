@@ -62,11 +62,12 @@ class GE(object):
         sym_noise:  flag for mirror sampling, enabled by default
         """
         super().__init__()
-        self.mask_num, self.sigma = mask_num, sigma
         self.input_size = input_size
         self.fitness_fn = None  # the loss is f(x) for one class, specified by the 'explain()' function
         self.pv_floor, self.pv_ceil = None, None
         self.sym_noise = True
+        self.sigma = sigma
+        mask_num = mask_num // 2 if self.sym_noise else mask_num
 
         # Initialization of masks/noises
         self.masks = self._noise_masks((1, *input_size[1:]), mask_num) / 2 
@@ -158,11 +159,10 @@ class GE(object):
     def _get_symmetric_masks(self, masks):
         return torch.cat([masks, -masks]) if self.sym_noise else masks
 
-    @staticmethod
-    def _mask_smoothing(orgs, filter_width=5, filter_sigma=0.7, batch_size=64):
+    def _mask_smoothing(self, orgs, filter_width=5, filter_sigma=0.7, batch_size=64, device='cpu'):
         if filter_width <= 0:
             return orgs
-        smoother = FixedGaussianFilter((filter_width, filter_width), filter_sigma)
+        smoother = FixedGaussianFilter((filter_width, filter_width), filter_sigma, device=device)
         n = len(orgs)
         masks = []
         for i in tqdm(range(0, n, batch_size), desc='Smoothing masks'):
@@ -219,12 +219,13 @@ class GEEX_raw(GE, ExplainerWithBaseline):
        
 """
 Section 3.3 GEEX -- Integrating dense one-sample gradient estimators
+Using Gaussian distribution for sampling
 """    
 class GEEX(GE, ExplainerWithBaseline):
     def __init__(self, mask_num, sigma, input_size, baseline=None):
         super().__init__(mask_num, sigma, input_size)
         self.baseline = baseline if baseline is not None else torch.zeros(input_size)
-        self.alphas = torch.rand(mask_num)  # Uniformly sampled points on path
+        self.path_args = torch.linspace(0, 1, mask_num)  
         self.blur_m = None
         if isinstance(self.baseline, str) and self.baseline.lower() == 'blur':
             # use default bluring kernel for baseline
@@ -237,12 +238,12 @@ class GEEX(GE, ExplainerWithBaseline):
 
     def _interpolate(self, img, baseline, *args):
         """ Interpolated instances are returned in BATCH, differing from the output in list for IG """
-        alphas = args[0]
-        return alphas.view(-1,1,1,1) * img + (1-alphas).view(-1,1,1,1) * baseline
+        path_args = args[0]
+        return path_args.view(-1,1,1,1) * img + (1-path_args).view(-1,1,1,1) * baseline
 
     def _get_path_args(self, ptr_l, ptr_r, device):
         if self.path_mode == 'interpolate':
-            path_args = self.alphas[ptr_l: ptr_r].to(device)
+            path_args = self.path_args[ptr_l: ptr_r].to(device)
         else:
             assert 1==0, f'Unknown path mode, only support {self.available_choices.keys()}'
         path_args = torch.cat([path_args, path_args]) if self.sym_noise else path_args
@@ -278,6 +279,67 @@ class GEEX(GE, ExplainerWithBaseline):
             diff = (img - baseline)[0] 
             grad = raw * diff
             return (grad.cpu(), raw.cpu()) if get_raw else grad.cpu()
+     
+"""
+Alternatively, the search distribution can also be defined as Bernoulli with 
+feature value options given by the explicand and the baseline.
+Using Bernoulli distribution is particularly in favored with high dimensional input due to:
+1.  Samples from Bernoulli are more likely to expose changes in model outcome, thus faciliating
+    convergence of estimates
+2.  the sampling masks from Bernoulli distribution are binary vectors/matrices, better compatible 
+    with mask smoothing;
+"""
+class bGEEX(GEEX):
+    def __init__(self, mask_num, input_size, filter_width=31, filter_sigma=5.0, baseline=None):
+        super().__init__(mask_num, 1.0, input_size, baseline)
+        self.filter_w, self.filter_s = filter_width, filter_sigma
+        self.masks = self._mask_smoothing(self.masks, self.filter_w, self.filter_s)
+        self.masks = (self.masks > 0).to(torch.int8)
+
+    def _get_symmetric_masks(self, masks):
+        return torch.cat([masks, 1-masks]) if self.sym_noise else masks
+    
+    def _apply_noises(self, img, masks, *args):
+        baseline = args[0]
+        return masks * img + (1-masks) * baseline
+    
+    def explain(self, m, img, batch_size=64, verbose=False, target_class=None, get_raw=False):
+        total_n, baseline = len(self.masks), self._get_baseline(img)
+        device = utils.get_device(m)
+        if isinstance(baseline, torch.Tensor):
+            baseline = baseline.to(device)
+        with torch.no_grad():
+            ges = []
+            img = img.to(device)
+            lbl = m(img).detach().cpu().argmax().item() 
+            target_class = lbl if target_class is None else target_class
+            for i in tqdm(range(0, total_n, batch_size), disable=not verbose):
+                ptr = min(i+batch_size, total_n)
+                batch_weight = float(ptr - i) / batch_size
+
+                masks = self._get_symmetric_masks(self.masks[i: ptr].to(device))
+                path_args = self._get_path_args(i, ptr, device)
+
+                samples = self._get_path(img, baseline, path_args)
+                queries = self._apply_noises(samples, masks, baseline)
+
+                fitness = self._fitness(m, queries, target_class).to(device)
+
+                ge_batch = self._gradient_estimate(fitness, masks)
+                ge_batch = torch.mean(ge_batch, dim=0, keepdim=True) * batch_weight
+                ges.append(ge_batch)
+            raw = torch.mean(torch.cat(ges), dim=0)
+            # The sign is inherently contained in the search distribution
+            # taking the abs to avoid falsely flipping the contribution direction
+            diff = torch.abs((img - baseline)[0])   
+            grad = raw * diff
+            return (grad.cpu(), raw.cpu()) if get_raw else grad.cpu()
+    
+    def _gradient_estimate(self, fitness, masks):
+        shape = fitness.shape if fitness.ndim == 2 else (fitness.shape[0], 1)
+        shape = shape + (1, 1)
+        fitness = torch.tile(fitness.reshape(shape), (1,1) + self.input_size[-2:])
+        return fitness * (masks-0.5).sign()
         
 class FixedGaussianFilter:
     def __init__(self, kernel_size, sigma, dtype: torch.dtype=torch.float32, device: torch.device='cpu') -> None:
@@ -306,7 +368,8 @@ class FixedGaussianFilter:
             if s <= 0.0:
                 raise ValueError(f"sigma should have positive values. Got {sigma}")
         self.kernel_size, self.sigma = kernel_size, sigma
-        self.dtype, self.device = dtype, device
+        self.device = device
+        self.dtype = dtype
 
         kernel2d = self._get_gaussian_kernel2d() # Pre-loaded kernel
         # self.variance_normalizer = torch.sum(torch.square(self.kernel2d))
