@@ -3,7 +3,7 @@ This repository contains the implementation of the black-box explainer GEEX and 
 > [On Gradient-like Explanation under a Black-box Setting: When Black-box Explanations Become as Good as White-box](https://arxiv.org/abs/2308.09381)\
 > Yi Cai, Gerhard Wunder, *ICML'24*
 
-Cite the paper as:
+If you find the content of the repository useful, please consider citing our paper as:
 ```
 @article{cai2023gradient,
   title={On Gradient-like Explanation under a Black-box Setting: When Black-box Explanations Become as Good as White-box},
