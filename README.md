@@ -5,11 +5,18 @@ This repository contains the implementation of the black-box explainer GEEX and 
 
 If you find the content of the repository useful, please consider citing our paper as:
 ```
-@article{cai2023gradient,
-  title={On Gradient-like Explanation under a Black-box Setting: When Black-box Explanations Become as Good as White-box},
-  author={Cai, Yi and Wunder, Gerhard},
-  journal={arXiv preprint arXiv:2308.09381},
-  year={2023}
+
+@InProceedings{pmlr-v235-cai24h,
+  title = 	 {On Gradient-like Explanation under a Black-box Setting: When Black-box Explanations Become as Good as White-box},
+  author =       {Cai, Yi and Wunder, Gerhard},
+  booktitle = 	 {Proceedings of the 41st International Conference on Machine Learning},
+  pages = 	 {5360--5382},
+  year = 	 {2024},
+  editor = 	 {Salakhutdinov, Ruslan and Kolter, Zico and Heller, Katherine and Weller, Adrian and Oliver, Nuria and Scarlett, Jonathan and Berkenkamp, Felix},
+  volume = 	 {235},
+  series = 	 {Proceedings of Machine Learning Research},
+  month = 	 {21--27 Jul},
+  publisher =    {PMLR}
 }
 ```
 
